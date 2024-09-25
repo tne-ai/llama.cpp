@@ -18988,6 +18988,7 @@ struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t siz
         /*.nodes        =*/ nodes_ptr,
         /*.grads        =*/ grads_ptr,
         /*.leafs        =*/ leafs_ptr,
+        /*.prof         =*/ NULL,
         /*.hash_table   =*/ { hash_size, hash_used, hash_keys_ptr },
         /*.order        =*/ GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,
     };
@@ -19009,6 +19010,7 @@ struct ggml_cgraph ggml_graph_view(struct ggml_cgraph * cgraph0, int i0, int i1)
         /*.nodes        =*/ cgraph0->nodes + i0,
         /*.grads        =*/ cgraph0->grads ? cgraph0->grads + i0 : NULL,
         /*.leafs        =*/ NULL,
+        /*.prof         =*/ NULL,
         /*.hash_table   =*/ { 0, NULL, NULL },
         /*.order        =*/ cgraph0->order,
     };
@@ -19873,6 +19875,8 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
     for (int node_n = 0; node_n < cgraph->n_nodes && !tp->abort; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
 
+        ggml_profile_op_event(cgraph, GGML_PROF_OP_START, node_n, state->ith);
+
         ggml_compute_forward(&params, node);
 
         if (state->ith == 0 && cplan->abort_callback &&
@@ -19881,7 +19885,11 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
             tp->ec    = GGML_STATUS_ABORTED;
         }
 
+        ggml_profile_op_event(cgraph, GGML_PROF_OP_SYNC, node_n, state->ith);
+
         ggml_barrier(state->threadpool);
+
+        ggml_profile_op_event(cgraph, GGML_PROF_OP_END,  node_n, state->ith);
     }
 
     return 0;
@@ -20154,6 +20162,8 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
         threadpool->ec               = GGML_STATUS_SUCCESS;
     }
 
+    ggml_profile_graph_start(cgraph, n_threads);
+
 #ifdef GGML_USE_OPENMP
     if (n_threads > 1) {
         #pragma omp parallel num_threads(n_threads)
@@ -20192,6 +20202,8 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
     if (disposable_threadpool) {
         ggml_threadpool_free(threadpool);
     }
+
+    ggml_profile_graph_finish(cgraph, n_threads);
 
     return ret;
 }
