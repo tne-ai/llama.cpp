@@ -19876,7 +19876,7 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
     for (int node_n = 0; node_n < cgraph->n_nodes && !tp->abort; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
 
-        ggml_profile_op_event(cgraph, GGML_PROF_OP_START, node_n, state->ith);
+        ggml_graph_profile_event(cgraph, GGML_PROF_OP_START, node_n, state->ith);
 
         ggml_compute_forward(&params, node);
 
@@ -19886,11 +19886,16 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
             tp->ec    = GGML_STATUS_ABORTED;
         }
 
-        ggml_profile_op_event(cgraph, GGML_PROF_OP_SYNC, node_n, state->ith);
+        ggml_graph_profile_event(cgraph, GGML_PROF_OP_SYNC, node_n, state->ith);
 
         ggml_barrier(state->threadpool);
 
-        ggml_profile_op_event(cgraph, GGML_PROF_OP_END,  node_n, state->ith);
+        ggml_graph_profile_event(cgraph, GGML_PROF_OP_END,  node_n, state->ith);
+    }
+
+    if (ggml_graph_profile_enabled(cgraph)) {
+        // need another barrier to flush the last timing update
+        ggml_barrier(state->threadpool);
     }
 
     return 0;
@@ -20163,7 +20168,7 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
         threadpool->ec               = GGML_STATUS_SUCCESS;
     }
 
-    ggml_profile_graph_start(cgraph, n_threads);
+    ggml_graph_profile_start(cgraph, n_threads);
 
 #ifdef GGML_USE_OPENMP
     if (n_threads > 1) {
@@ -20195,6 +20200,8 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
     ggml_graph_compute_thread(&threadpool->workers[0]);
 #endif
 
+    ggml_graph_profile_finish(cgraph, n_threads);
+
     // don't leave affinity set on the main thread
     clear_numa_thread_affinity();
 
@@ -20203,8 +20210,6 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
     if (disposable_threadpool) {
         ggml_threadpool_free(threadpool);
     }
-
-    ggml_profile_graph_finish(cgraph, n_threads);
 
     return ret;
 }
